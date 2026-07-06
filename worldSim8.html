@@ -1,0 +1,57 @@
+<html>
+	<head>
+		<title>WorldSim! 8</title>
+		<script type="text/javascript" src="Chart.min.js"></script>
+		<script type="text/javascript" src="worldSim8.js"></script>
+	</head>
+	<body>
+	<form id="ControlPannel">
+		<input type="button" onClick="doIteration();" value="do Iteration!"/>
+		<!--<input type="button" onClick="testGetMin();" value="getMin"/>
+		<input type="button" onClick="testGetMax();" value="getMax"/>
+		<input type="button" onClick="testGetValue();" value="getValue"/>-->
+		<input type="button" onClick="testCountRegions();" value="CountRegions"/>
+		<input type="button" onClick="testSupDem();" value="SupDem"/>
+		
+		<input type="button" onClick="testRegionalCalcPrices();" value="RegionalCalcPrices"/>
+		<input type="button" onClick="updateCharts();" value="updateCharts"/>
+		<br>
+		<input type="button" onClick="console.log(agents[watchAgent].getPlan(5));" value="getPlan5"/>
+	</form>
+	<form id="metricForm">
+		<input type="radio" name="metric" value="price" checked>Price | 
+		<input type="radio" name="metric" value="quantity">Quantity | 
+		<input type="radio" name="metric" value="supply">Supply | 
+		<input type="radio" name="metric" value="demand">Demand 
+	</form> 
+	<table border="1px">
+		<tr>
+			<td>
+				<canvas id="region0Chart" width="800" height="600"></canvas>
+			</td>
+			<td>
+				<canvas id="region1Chart" width="800" height="600"></canvas>
+			</td>
+		</tr>
+		<tr>
+			<td>
+				<canvas id="region2Chart" width="800" height="600"></canvas>
+			</td>
+			<td>
+				<canvas id="region3Chart" width="800" height="600"></canvas>
+			</td>
+		</tr>
+	</table>
+	<br>
+	<table border="1px">
+		<tr>
+			<td>
+				<canvas id="foodChart" width="800" height="600"></canvas>
+			</td>
+			<td>
+				<canvas id="energyChart" width="800" height="600"></canvas>
+			</td>
+		</tr>
+	</table>
+	</body>
+</html>

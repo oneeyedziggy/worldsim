@@ -1,0 +1,653 @@
+<!-- last meaningfully updated 08/02/2019 -->
+<html>
+
+<head>
+	<title>Maze Draw 3D!</title>
+	<style>
+		body {
+			margin: 0;
+		}
+
+		canvas {
+			width: 100%;
+			height: 100%
+		}
+	</style>
+	<script src="three.min.js"></script>
+	<!-- updated script ref 07/06/2026 -->
+	<script src="OrbitControlsOrig.js"></script>
+</head>
+
+<body>
+</body>
+<script>
+	//aStarGlobals ;
+	var strokePathOn = 0;
+	var strokeExploredOn = 0;
+	var strokeOpenOn = 0;
+	var slowMode = 0;
+	var openNodes = [];
+	var exploredPositions = [];
+	var openPositions = [];
+	var numAstarCalls = 0;
+
+	var genericNode = function (iname, iposition, iparent, istatus, idepth) {
+		this.name = iname;
+		this.parent = iparent;
+		this.depth = idepth || 0; //the depth of this node in the chain;
+		this.position = iposition;
+		this.aStarScore = undefined;
+		this.position = iposition;
+		this.status = istatus || 'unexplored'; //unexplored, explored, and open are valid states;
+	};
+
+	"use strict";
+	//grid width and height;
+	var bw = 400;
+	var bh = 400;
+
+	//padding around grid;
+	var padding = 10;
+	var hcellcount = 40;
+	var vcellcount = 40;
+
+	var hcutRate = 0.40;
+	var vcutRate = 0.40;
+	var hcutCount = Math.round(hcellcount * vcellcount * (hcutRate)); //aaa - floor to round
+	var vcutCount = Math.round(hcellcount * vcellcount * (vcutRate)); //aaa - floor to round
+
+	//calc canvas width and height from base maze dimensions and padding values ;
+	var cw = bw + (padding * 2) + 1;
+	var ch = bh + (padding * 2) + 1;
+	//calc cell sizes from base map dimensions and desired cell counts in each dimension;
+	var cellW = Math.round(bw / hcellcount); //aaa - floor to round
+	var cellH = Math.round(bh / vcellcount); //aaa - floor to round
+
+	//declare and initialize h and v lines of full grid;
+	//comment these to get a new map each time, uncomment to use the same map as last time;
+	//hlines = JSON.parse(localStorage.getItem('hlines'));
+	//vlines = JSON.parse(localStorage.getItem('vlines'));
+	if (!hlines || !vlines) {
+		//console.log(!hlines);
+		//console.log(!vlines);
+		var hlines = [];
+		var vlines = [];
+		for (var x = 0; x <= hcellcount; x++) {
+			hlines[x] = [];
+			vlines[x] = [];
+			for (var y = 0; y <= vcellcount; y++) {
+				hlines[x][y] = [];
+				vlines[x][y] = [];
+				//set the validity of h and v paths;
+				hlines[x][y][0] = true;
+				vlines[x][y][0] = true;
+				//set the wear rate/cost of the paths;
+				hlines[x][y][1] = 0;
+				vlines[x][y][1] = 0;
+			};
+		};
+
+		//line x or y is below and/or right of point x or y;
+		//so line x is right of point x, line x-1 is left of point x;
+		//and line y is below point y, line y-1 is above point y;
+		var killswitch = 0;
+		//false-out some of the hlines based on the defined cut rate;
+		for (var randInc = 0; randInc < hcutCount; randInc++) {
+			if (killswitch >= 1000) {
+				break;
+			};
+			var randx = Math.floor(hcellcount * Math.random());
+			var randy = Math.floor(vcellcount * Math.random());
+
+			//keep looping through until you find a path that hasn't been removed yet
+			while (hlines[randx][randy][0] == false) {
+				var randx = Math.floor(hcellcount * Math.random());
+				var randy = Math.floor(vcellcount * Math.random());
+			};
+
+			//make sure the first bar stays... may not be needed any more
+			if (!(randx === 0 && randy === 0)) {
+				hlines[randx][randy][0] = false;
+				hlines[randx][randy][1] = -1;
+			};
+
+
+			var hStartNode = new genericNode('hStartNode', { 'x': randx, 'y': randy }, undefined, 'explored');
+			var hEndNode = new genericNode('hEndNode', { 'x': (randx + 1), 'y': randy }, undefined, 'unexplored');
+
+			//if you can't path from one end to the other of the removed node in 40 steps or fewer after removing it, put it back and try again on another random node
+			//if aStarFromTo errs it'll return an array w/ '0' in the first slot
+			if (aStarFromTo(hStartNode, hEndNode, 40)[0] != 1) {
+				hlines[randx][randy][0] = true;
+				hlines[randx][randy][1] = 0;
+				randInc--; //this could introduce infinite loops;
+				killswitch++;
+			}
+		};
+
+		killswitch = 0;
+		//false-out some of the vlines;
+		for (var randInc = 0; randInc < vcutCount; randInc++) {
+
+			if (killswitch >= 1000) {
+				break;
+			};
+			randx = Math.floor(hcellcount * Math.random());
+			randy = Math.floor(vcellcount * Math.random());
+
+			//keep looping through until you find a path that hasn't been removed yet
+			while (vlines[randx][randy][0] == false) {
+				randx = Math.floor(hcellcount * Math.random());
+				randy = Math.floor(vcellcount * Math.random());
+			};
+
+			//make sure the first bar stays... may not be needed any more
+			if (!(randx === 0 && randy === 0)) {
+				vlines[randx][randy][0] = false;
+				vlines[randx][randy][1] = -1;
+			};
+
+			var vStartNode = new genericNode('vStartNode', { 'x': randx, 'y': randy }, undefined, 'explored');
+			var vEndNode = new genericNode('vEndNode', { 'x': randx, 'y': (randy + 1) }, undefined, 'unexplored');
+
+			//if you can't path from one end to the other of the removed node in 40 steps or fewer after removing it, put it back and try again on another random node
+			if (aStarFromTo(vStartNode, vEndNode, 40)[0] != 1) {
+				vlines[randx][randy][0] = true;
+				vlines[randx][randy][1] = 0;
+				randInc--; //this could introduce infinite loops;
+				killswitch++;
+			}
+		};
+
+		//save current map to localStorage
+		localStorage.setItem('hlines', JSON.stringify(hlines));
+		localStorage.setItem('vlines', JSON.stringify(vlines));
+	};
+
+
+	//Draw out the hlines and vlines arrays;
+	function drawBoard() {
+
+		//-------------scene setup/parameters---------------
+		var scene = new THREE.Scene();
+		var camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+
+		camera.position.x = 0;
+		camera.position.y = 0;
+		camera.position.z = 300;
+		var focalPoint = new THREE.Vector3(camera.position.x, camera.position.y, camera.position.z - 50);
+		//var focalPoint = new THREE.Vector3(-190,90,0);
+
+
+		var controls = new THREE.OrbitControls(camera);
+		controls.target = focalPoint;
+		//don't need this if the render loop is going
+		//controls.addEventListener( 'change', render );
+
+		var renderer = new THREE.WebGLRenderer();
+		renderer.setSize(window.innerWidth, window.innerHeight); document.body.appendChild(renderer.domElement);
+
+		var ambientLight = new THREE.AmbientLight(0x888888);
+		scene.add(ambientLight);
+
+		var directionalLight = new THREE.DirectionalLight(0xffffff);
+		directionalLight.position.set(2, 2, 5).normalize();
+		scene.add(directionalLight);
+
+		//-----------------draw plane---------------------
+
+		var geometry = new THREE.PlaneBufferGeometry(cw, ch);
+		//var material = new THREE.MeshLambertMaterial( {color: 0x005500, side: THREE.DoubleSide} ); 
+		var material = new THREE.MeshLambertMaterial({ color: 0x555555, side: THREE.DoubleSide });
+		var plane = new THREE.Mesh(geometry, material);
+		plane.position.x = 0;
+		plane.position.y = 0;
+		scene.add(plane);
+
+		//--------------------==========------------------
+		var roadWRatio = 0.10;
+		var roadHRatio = 1.0;
+		var roadbuildingWRatio = 0.8;
+		var roadbuildingHRatio = 0.8;
+
+		//-------------------draw roads---------------------------
+
+		var roadWidth = cellW * roadWRatio;
+		var roadHeight = cellH * roadHRatio;
+		for (var x = 0; x <= bw; x += cellW) {
+			for (var xc = 0; xc < vcellcount; xc++) {
+				//if the line at the coord derived from the current x and cell width;
+				//if this bar in the map should be drawn
+				if (vlines[Math.floor((x) / cellW)][xc][0]) {
+
+					var roadXpos = x + padding;//+ (roadWidth);
+					var roadYpos = (padding + (xc * cellW) + (roadHeight * 0.5)) + (roadWidth * 0.5);
+
+					//var randomColor = '0x'+Math.floor(Math.random()*16777215).toString(16);
+					var randomColor = '0xFFFFFF';
+					var geometry = new THREE.PlaneBufferGeometry(roadWidth, roadHeight);
+					var material = new THREE.MeshLambertMaterial({ color: parseInt(randomColor.replace(/^#/, ''), 16), side: THREE.DoubleSide });
+					var plane = new THREE.Mesh(geometry, material);
+					plane.position.x = roadXpos - (cw * 0.5);
+					plane.position.y = roadYpos - (ch * 0.5);
+					plane.position.z = 0.5;
+					scene.add(plane);
+				};
+			};
+		};
+
+		var roadWidth = cellH * roadHRatio;
+		var roadHeight = cellW * roadWRatio;
+		for (var y = 0; y <= bh; y += cellH) {
+			for (var yc = 0; yc < hcellcount; yc++) {
+				//if this bar in the map should be drawn
+				if (hlines[yc][Math.floor((y) / cellH)][0]) {
+
+					var roadXpos = (padding + (yc * cellH)) + (roadWidth * 0.5);//
+					var roadYpos = (y + padding) + (roadHeight * 0.5);
+					//var randomColor = '0x'+Math.floor(Math.random()*16777215).toString(16);
+					var randomColor = '0xFFFFFF';
+					var geometry = new THREE.PlaneBufferGeometry(roadWidth, roadHeight);
+					var material = new THREE.MeshLambertMaterial({ color: parseInt(randomColor.replace(/^#/, ''), 16), side: THREE.DoubleSide });
+					var plane = new THREE.Mesh(geometry, material);
+					plane.position.x = roadXpos - (cw * 0.5);
+					plane.position.y = roadYpos - (ch * 0.5);
+					plane.position.z = 0.5;
+					scene.add(plane);
+				};
+			};
+		};
+
+		//point to 3d
+		function pointToSpace(position) {
+			var x = -200 - (cellW * roadWRatio * 0.5) + (position.x * cellW);
+			var y = -200 + (position.y * cellH);
+			return { 'x': x, 'y': y };
+		}
+
+		var cubes = [];
+
+		///*
+		var populatedPoints = [];
+		for (var i = 0; i < 800; i++) {
+			//var geometry = new THREE.BoxGeometry( 2, 2, 5 );
+			var geometry = new THREE.BoxGeometry(1, 1, 5);
+			//var randomColor = parseInt('0x'+Math.floor(Math.random()*16777215).toString(16),16);
+			var randomColor = '0x000000';
+			var material = new THREE.MeshLambertMaterial({ color: randomColor });
+			cubes[i] = {};
+			cubes[i].cube = new THREE.Mesh(geometry, material);
+			var currX = Math.floor(Math.random() * 40);
+			var currY = Math.floor(Math.random() * 40);
+			///*
+			while (populatedPoints[currX] && populatedPoints[currX][currY]) {
+				currX = Math.floor(Math.random() * 40);
+				currY = Math.floor(Math.random() * 40);
+			}
+			if (!populatedPoints[currX]) populatedPoints[currX] = [];
+			populatedPoints[currX][currY] = 1;//*/
+
+			var startPos = { 'x': currX, 'y': currY };
+			var currPos = pointToSpace(startPos);
+			cubes[i].cube.position.x = currPos.x;
+			cubes[i].cube.position.y = currPos.y;
+			//cubes[i].cube.position.z = 4.1 ; //2X2X5
+			cubes[i].cube.position.z = 4.1;
+			cubes[i].cubeSpeed = 0.5;
+			scene.add(cubes[i].cube);
+			cubes[i].cubeState = "moving";
+
+			var startNode = new genericNode('startNode', startPos, undefined, 'explored');
+
+			var destPos = { 'x': Math.floor(Math.random() * 40), 'y': Math.floor(Math.random() * 40) };
+			var endNode = new genericNode('endNode', destPos, undefined, 'unexplored');
+
+			//console.log('calling astar algo');
+			cubes[i].cubePath = aStarFromTo(startNode, endNode, 500, 0)[1];
+		}
+		//console.log(populatedPoints);
+		populatedPoints = [];
+		//console.log(cubes);
+
+		//makes camera look straight down
+		camera.lookAt(camera.position);
+
+		function render() {
+			//inc++;
+			//console.log(cubes.length);
+			for (cubel in cubes) {
+				cube = cubes[cubel].cube;
+
+				if (cubes[cubel].cubePath.length > 0 && cubes[cubel].cubeState === "moving") {
+					//var randomColor = new THREE.Color(parseInt('0x'+Math.floor(Math.random()*16777215).toString(16),16));				
+					//cube.material.color = randomColor;
+
+					var destPosition = pointToSpace(cubes[cubel].cubePath[0]);
+					cube.position.x += cubes[cubel].cubeSpeed * Math.sign(destPosition.x - cube.position.x);
+					cube.position.y += cubes[cubel].cubeSpeed * Math.sign(destPosition.y - cube.position.y);
+
+					//if the dist to the dest is less than the step/tick dist, call them equal and say we're done here
+					if (Math.abs(cube.position.x - destPosition.x) < cubes[cubel].cubeSpeed && Math.abs(cube.position.y - destPosition.y) < cubes[cubel].cubeSpeed) {
+						//remove the last point from the path
+						cubes[cubel].cubePath.splice(0, 1);
+						if (cubes[cubel].cubePath.length === 0) {
+							cubes[cubel].cubeState = "waiting";
+							//console.log("node found to be at destination, waiting!");
+						}
+					}
+				}/*else if(cubes[cubel].cubeState === "waiting"){
+						console.log("node found to be waiting, being given a new lease on life!");
+						var startNode = new genericNode('startNode',cube.position, undefined, 'explored');
+						var destPos = {'x':Math.floor(Math.random()*40),'y':Math.floor(Math.random()*40)};
+						var endNode = new genericNode('endNode',destPos, undefined, 'unexplored');
+						
+						//console.log('calling astar algo');
+						cubes[cubel].cubePath = aStarFromTo(startNode, endNode, 500, 0)[1]; 
+						cubes[cubel].cubeState = "moving";
+					}*/else {
+					//console.log("what are you even doing here bruh?");
+					cubes[cubel].cubeState = "waiting";
+				}
+			}
+			//sleep(100);
+			requestAnimationFrame(render);
+			renderer.render(scene, camera);
+		}
+		console.time('perfTimer');
+		//setTimeout(render(), 100);	
+		render();
+	};
+
+	var db = new drawBoard();
+
+
+
+	//-----------------a* stuff is below-------------------
+
+
+
+	////!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	////aStarDiuagnostic section;
+	strokePathOn = 1;
+	strokeExploredOn = 1;
+	strokeOpenOn = 1;
+	//slowMode = 1;
+
+	openNodes = [];
+	exploredPositions = [];
+	openPositions = [];
+
+	//var startNode = new genericNode('startNode',{'x':0,'y':0}, undefined, 'explored');
+	//var endNode = new genericNode('endNode',{'x':39,'y':39}, undefined, 'unexplored');
+	//console.time('PathingTook(ms)');
+	//this is the call that starts the pathing;
+	//console.log('aStarFromTo(startNode, endNode, 500, 0) result:'); //1600;
+	//console.log(startNode); //1600;
+	//console.log(endNode); //1600;
+	//console.log(aStarFromTo(startNode, endNode, 1600, 0)); //1600;
+	//console.timeEnd('PathingTook(ms)');
+	////!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+	//show at the end whether there's overlap between explored and open, and if so, how much;
+	var overlapInExploredAndOpen = [];
+	for (var i = 0; i < openPositions.length; i++) {
+		//console.log(exploredPositions.indexOf(openPositions[i]));
+		if (exploredPositions.indexOf(openPositions[i]) > -1) {
+			overlapInExploredAndOpen.push(openPositions[i] + ' occurs in exploredPositions as well');
+		};
+	};
+	/*for(var i=0;i<exploredPositions.length;i++){
+		//console.log(exploredPositions.indexOf(openPositions[i]));
+		if(openPositions.indexOf(exploredPositions[i]) > -1 ){
+			overlapInExploredAndOpen.push(exploredPositions[i] + ' occurs in openPositions as well');
+		};
+	};*/
+
+	function findNewOpenNodes(inputNode) {
+		//returns array of x,y,available w/o checking for non-negative x's and y's;
+		if (inputNode.position) {
+			var availableNodesUDRL = getUDRLAvailability(inputNode.position.x, inputNode.position.y);
+		} else {
+			return "error: invalid inputNode.position";
+		};
+		var nodeIndexNames = ['Up', 'Down', 'Right', 'Left'];
+		var newOpenNodes = [];
+		for (var node in availableNodesUDRL) {
+			if (availableNodesUDRL[node][2] != -1) {
+				var potentialNewOpen = JSON.stringify({ "x": availableNodesUDRL[node][0], "y": availableNodesUDRL[node][1] });
+				if (openPositions.indexOf(potentialNewOpen) == -1) {
+					if (exploredPositions.indexOf(potentialNewOpen) == -1) { //this is failing infrequently for some reason... not a big deal, but slows things slightly;
+						openPositions.push(potentialNewOpen);
+						//paint this as an open node;
+
+						if (strokeOpenOn) {
+							//strokePath(inputNode.position, "{'x':"+availableNodesUDRL[node][0]+",'y',"+availableNodesUDRL[node][1]+'}', 'yellow');
+						};
+						newOpenNodes.push(new genericNode(nodeIndexNames[node], { 'x': availableNodesUDRL[node][0], 'y': availableNodesUDRL[node][1] }, inputNode, 'open', (inputNode.depth + 1)));
+					};
+				};
+			};
+		};
+		return newOpenNodes;
+	};
+
+	function findLowestOpenNode(inputNode, openNodes, exploredPositions, currentDepth) {
+		//calculate what the lowest score open node is for use later;
+		if (openNodes.length == 0) {
+			var output = 'insufficient open paths';
+		} else if (openNodes.length == 1) {
+			var lowestAstarScoreNode = openNodes[0];
+			var output = lowestAstarScoreNode;
+		} else {
+			var lowestAstarScoreNode = {};
+			var lowestAstarScore = 999999;
+			var potentialNode = {};
+			for (var node in openNodes) {
+				node = openNodes[node];
+				if (exploredPositions.indexOf(JSON.stringify(node.position)) == -1) {
+					var originalNodeaStarScore = node.aStarScore;
+					if (!originalNodeaStarScore) {
+						//astar score = orthagonal dist traveled times diagonal dist to goal;
+						node.aStarScore = node.aStarScore || (4 * Math.sqrt(Math.pow((node.position.x - inputNode.position.x), 2) + Math.pow((node.position.y - inputNode.position.y), 2)) * 1) + node.depth;
+						//node.aStarScore = node.aStarScore || Math.abs(node.position.x - inputNode.position.x) + Math.abs(node.position.y - inputNode.position.y) + node.depth;
+						if ((node.position.x == 10 && node.position.y == 10) || (node.position.x == 20 && node.position.y == 20) || (node.position.x == 30 && node.position.y == 30)) {
+
+							//console.log(JSON.stringify(node.position) + ': node.aStarScore=' + node.aStarScore.toString() + '; distToDest=' + (2*Math.sqrt(Math.pow((node.position.x - inputNode.position.x),2) + Math.pow((node.position.y - inputNode.position.y),2))*1).toString() + '; node.depth=' + node.depth + '; node.status='+node.status);
+						};
+					};
+					if ((node.aStarScore < lowestAstarScore) || (node.aStarScore == lowestAstarScore && randrange(0, 1) == 1)) {
+						lowestAstarScoreNode = node;
+						lowestAstarScore = node.aStarScore;
+					};
+
+					var output = lowestAstarScoreNode;
+					if (lowestAstarScoreNode == {} || lowestAstarScore == 999999) {
+						//you've reached a dead end/painted yourself into a corner and/or are likely stuck on an island isolated from the destination node.;
+						output = 'error: NO OPEN NODES';
+					};
+				};
+			};
+		};
+		return output;
+	};
+
+	//Response Codes:;
+	// [0] = 0 - success, [1] = array of coordinates like: '{"x":0,"y":0}', path ordered start to finish;
+	// [0] = 1 - success, [1] = string: reason for incomplete: max depth, no open nodes, etc.;
+	function aStarFromTo(inputNode, destinationNode, maxDepth, currentDepth) {
+		numAstarCalls += 1;
+
+		maxDepth = maxDepth || 100;
+		currentDepth = currentDepth || 0;
+
+		if (currentDepth == 0) {
+			//console.log("inputNode.pos: "+JSON.stringify(inputNode.position));
+
+			openNodes = [];
+			exploredPositions = [];
+			openPositions = [];
+		}
+
+		//remove the input node from open nodes;
+		openNodes.splice(openNodes.indexOf(inputNode), 1);
+
+		//why the fuck doesn't this work unless I do it twice?;
+		openPositions.splice(openPositions.indexOf(JSON.stringify(inputNode.position), 1));
+		openPositions.splice(openPositions.indexOf(JSON.stringify(inputNode.position), 1));
+
+		inputNode.status = 'explored';
+		exploredPositions.push(JSON.stringify(inputNode.position));
+		//concat a new list of open nodes based on the input node;
+		var newOpenNodes = findNewOpenNodes(inputNode);
+
+		openNodes = openNodes.concat(newOpenNodes);
+
+		if (exploredPositions.length == 0) {
+			console.log('error: exploredPositions was empty inside aStarFromTo()');
+			console.log(exploredPositions);
+			return [0, 'error: exploredPositions was empty inside aStarFromTo()'];
+		};
+
+		if (openNodes.length == 0) {
+			//console.log('error: openNodes was empty inside aStarFromTo()');
+
+			return [0, 'openNodes was empty, so there are no more valid nodes (inside aStarFromTo())'];
+		};
+		var lowestAstarScoreNode = findLowestOpenNode(destinationNode, openNodes, exploredPositions, currentDepth);
+
+		if (lowestAstarScoreNode == undefined) {
+			return [0, 'lowestAstarScoreNode was undefined, so there were no more valid, unexplored nodes (inside aStarFromTo())'];
+		} else if (typeof lowestAstarScoreNode == 'string' && lowestAstarScoreNode.indexOf('error') > -1) {
+			return [0, lowestAstarScoreNode];
+		};
+
+		//evaluate whether at end or max depth and do the needful;
+		if ((JSON.stringify(lowestAstarScoreNode.position) == JSON.stringify(destinationNode.position))) {
+
+			currentNode = lowestAstarScoreNode;
+			//currentNode.name += ".endNode";
+			//var output = [currentNode.name + ' ' + JSON.stringify(currentNode.position)];
+			var output = [currentNode.position];
+			var outputAsNodes = [currentNode];
+			while (currentNode.parent) {
+				//console.log('g');
+				//prepend current node info since we're going backwards;
+				output.unshift(currentNode.parent.position);
+				outputAsNodes.unshift(currentNode.parent);
+				currentNode = currentNode.parent;
+			};
+			var currpos = outputAsNodes[0].position;
+			if (strokePathOn) {
+				console.log('b');
+				for (var node in outputAsNodes) {
+					node = outputAsNodes[node];
+					//strokePath(node.position, currpos, 'red');
+					currpos = node.position;
+				};
+			};
+			return [1, output];
+		} else if (currentDepth >= maxDepth) { //lowestAstarScoreNode.depth;
+
+			console.log('c');
+			var currentNode = lowestAstarScoreNode;
+			output = 'Max Depth Reached';
+			return [0, output];
+		} else {
+			//if you're not at the goal and lower than max steps, ;
+			//TODO:modify this to minimize "depth" and bring it closer to path length.;
+			//fast, not as cool to watch //880-950 //730-750;
+
+			//console.log('currentDepth:'+currentDepth);
+			if (openNodes.length == 0) {
+				console.log('d');
+				return [0, 'no more open nodes'];
+			};
+
+			/*if(slowMode){
+			
+				setTimeout(function(){aStarFromTo(lowestAstarScoreNode , destinationNode, maxDepth, (currentDepth+1))},10);
+			}else{*/
+			//not returning a status code here b/c all other returns are status code, and will pass back up the chain;
+			return aStarFromTo(lowestAstarScoreNode, destinationNode, maxDepth, (currentDepth + 1));
+			//};
+			//slow/cinematic;
+		};
+
+	};
+
+
+
+
+
+	//---------------------end a* stuff--------------
+
+
+
+
+
+
+	function sleep(milliseconds) {
+		var start = new Date().getTime();
+		for (var i = 0; i < 1e7; i++) {
+			if ((new Date().getTime() - start) > milliseconds) {
+				break;
+			}
+		}
+	}
+
+	/*
+	function strokePath(pos1, pos2, color){
+		if(color != 'red'){
+			//color = '#'+Math.floor(Math.random()*16777215).toString(16);
+		};
+		if(pos1.x == pos2.x || pos1.y == pos2.y){
+			context.strokeStyle = color;//'#FF0000';//'#'+Math.floor(Math.random()*16777215).toString(16);
+			context.beginPath();
+			context.lineWidth = 3;
+			context.moveTo( (pos1.x * cellW) + padding + 0.5, (pos1.y * cellH) + padding + 0.5);
+			context.lineTo( (pos2.x * cellW) + padding + 0.5, (pos2.y * cellH) + padding + 0.5);
+			context.stroke();
+		}else{
+			return "error: path is diagonal";
+		};
+	};//*/
+
+	function getUDRLAvailability(x, y) {
+		//line x or y is below and/or right of point x or y;
+		//so line x is right of point x, line x-1 is left of point x;
+		//and line y is below point y, line y-1 is above point y;
+
+		//output is x and y of available node and a bit for weather the node is available;
+		if (x >= 0 && x < hcellcount && y >= 0 && y < vcellcount) {
+			var udrl = [];
+			if (y > 0) {
+				udrl.push([x, y - 1, vlines[x][y - 1][1]]); //up;
+			} else {
+				udrl.push([x, y - 1, -1]); //up;
+			};
+			if (y < (vcellcount - 1)) {
+				udrl.push([x, y + 1, vlines[x][y][1]]); //down;
+			} else {
+				udrl.push([x, y + 1, -1]); //down;
+			};
+			if (x < (hcellcount - 1)) {
+				udrl.push([x + 1, y, hlines[x][y][1]]); //right;
+			} else {
+				udrl.push([x + 1, y, -1]); //right;
+			};
+			if (x > 0) {
+				udrl.push([x - 1, y, hlines[x - 1][y][1]]); //left;
+			} else {
+				udrl.push([x - 1, y, -1]); //left;
+			};
+		};
+		return udrl;
+	};
+
+	function randrange(min, max) {
+		//select rand int in range inclusive;
+		return Math.round(Math.random() * (max - min) + min);
+	};
+</script>
+
+</html>

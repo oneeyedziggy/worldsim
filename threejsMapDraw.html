@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<title>Maze Draw 3D!</title>
+	<style>
+		html,
+		body {
+			margin: 0;
+			height: 100%;
+			overflow: hidden;
+		}
+
+		canvas {
+			display: block;
+			width: 100%;
+			height: 100%;
+		}
+	</style>
+</head>
+
+<body>
+	<div id="threejsMapDrawDiag"
+		style="position:fixed;top:8px;left:8px;z-index:9999;padding:6px 10px;background:rgba(0,0,0,0.75);color:#0f0;font:12px/1.4 monospace;max-width:90vw;white-space:pre-wrap;pointer-events:none;">
+	</div>
+</body>
+<script type="module">
+	import * as THREE from './three.module.min.js';
+	import OrbitControls from './OrbitControls.js';
+
+	// --- Configuration Constants ---
+	const BW = 400;
+	const BH = 400;
+	const PADDING = 10;
+	const H_CELL_COUNT = 40;
+	const V_CELL_COUNT = 40;
+
+	const H_CUT_RATE = 0.40;
+	const V_CUT_RATE = 0.40;
+	const H_CUT_COUNT = Math.round(H_CELL_COUNT * V_CELL_COUNT * H_CUT_RATE);
+	const V_CUT_COUNT = Math.round(H_CELL_COUNT * V_CELL_COUNT * V_CUT_RATE);
+
+	const CW = BW + (PADDING * 2) + 1;
+	const CH = BH + (PADDING * 2) + 1;
+	const CELL_W = Math.round(BW / H_CELL_COUNT);
+	const CELL_H = Math.round(BH / V_CELL_COUNT);
+	const ROAD_W_RATIO = 0.10;
+	const ROAD_H_RATIO = 1.0;
+
+	const PLANE_GEOMETRY_CTOR = THREE.PlaneBufferGeometry ?? THREE.PlaneGeometry;
+	const SURFACE_MATERIAL_CTOR = THREE.MeshLambertMaterial ?? THREE.MeshStandardMaterial ?? THREE.MeshPhongMaterial ?? THREE.MeshBasicMaterial;
+
+	// --- State Variables ---
+	let openNodes = [];
+	let exploredPositions = [];
+	let openPositions = [];
+	let numAstarCalls = 0;
+	let renderLogFrame = 0;
+	let hlines = undefined;
+	let vlines = undefined;
+
+	// --- Instantiable Data Structures ---
+	class GenericNode {
+		constructor(iname, iposition, iparent, istatus = 'unexplored', idepth = 0) {
+			this.name = iname;
+			this.parent = iparent;
+			this.depth = idepth;
+			this.position = iposition;
+			this.aStarScore = undefined;
+			this.status = istatus;
+		}
+	}
+
+	// --- Core Utility Arrow Functions ---
+	const makeSurfaceMaterial = (options) => new SURFACE_MATERIAL_CTOR(options);
+
+	const resetRenderInfo = (renderer) => renderer?.info?.reset?.();
+
+	const sampleCanvasCenter = (renderer) => {
+		const gl = renderer.getContext();
+		const canvas = renderer.domElement;
+		const x = Math.max(0, Math.floor(canvas.width / 2));
+		const y = Math.max(0, Math.floor(canvas.height / 2));
+		const pixel = new Uint8Array(4);
+		gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+		return Array.from(pixel);
+	};
+
+	const updateDiagHud = (text) => {
+		const hud = document.getElementById('threejsMapDrawDiag');
+		if (hud) hud.textContent = text;
+	};
+
+	const randrange = (min, max) => Math.round(Math.random() * (max - min) + min);
+
+	const pointToSpace = (position) => ({
+		x: -200 - (CELL_W * ROAD_W_RATIO * 0.5) + (position.x * CELL_W),
+		y: -200 + (position.y * CELL_H)
+	});
+
+	const getRandomVibrantHex = () => (cl => {
+		cl.sort(() => Math.random() - 0.5);
+		return (cl[0] * 65536) + (cl[1] * 256) + cl[2];
+	})([
+		Math.floor(Math.random() * 52) + 204,
+		Math.floor(Math.random() * 52) + 51,
+		Math.floor(Math.random() * 154) + 51
+	]);
+
+	const getUDRLAvailability = (x, y) => {
+		if (x >= 0 && x < H_CELL_COUNT && y >= 0 && y < V_CELL_COUNT) {
+			const udrl = [];
+			udrl.push(y > 0 ? [x, y - 1, vlines[x][y - 1][1]] : [x, y - 1, -1]);
+			udrl.push(y < (V_CELL_COUNT - 1) ? [x, y + 1, vlines[x][y][1]] : [x, y + 1, -1]);
+			udrl.push(x < (H_CELL_COUNT - 1) ? [x + 1, y, hlines[x][y][1]] : [x + 1, y, -1]);
+			udrl.push(x > 0 ? [x - 1, y, hlines[x - 1][y][1]] : [x - 1, y, -1]);
+			return udrl;
+		}
+		return [];
+	};
+
+	// --- Pathfinding Engine Arrow Functions ---
+	const findNewOpenNodes = (inputNode) => {
+		if (!inputNode?.position) {
+			return "error: invalid inputNode.position";
+		}
+		const availableNodesUDRL = getUDRLAvailability(inputNode.position.x, inputNode.position.y);
+		const nodeIndexNames = ['Up', 'Down', 'Right', 'Left'];
+		const newOpenNodes = [];
+
+		availableNodesUDRL.forEach((nodeArr, idx) => {
+			if (nodeArr[2] !== -1) {
+				const potentialNewOpen = JSON.stringify({ x: nodeArr[0], y: nodeArr[1] });
+				if (!openPositions.includes(potentialNewOpen) && !exploredPositions.includes(potentialNewOpen)) {
+					openPositions.push(potentialNewOpen);
+					newOpenNodes.push(new GenericNode(
+						nodeIndexNames[idx],
+						{ x: nodeArr[0], y: nodeArr[1] },
+						inputNode,
+						'open',
+						inputNode.depth + 1
+					));
+				}
+			}
+		});
+		return newOpenNodes;
+	};
+
+	const findLowestOpenNode = (inputNode, openNodesList, exploredPositionsList) => {
+		if (openNodesList.length === 0) return 'insufficient open paths';
+		if (openNodesList.length === 1) return openNodesList[0];
+
+		let lowestAstarScoreNode = {};
+		let lowestAstarScore = 999999;
+
+		for (const node of openNodesList) {
+			if (!exploredPositionsList.includes(JSON.stringify(node.position))) {
+				if (node.aStarScore === undefined) {
+					node.aStarScore = (4 * Math.sqrt(Math.pow((node.position.x - inputNode.position.x), 2) + Math.pow((node.position.y - inputNode.position.y), 2))) + node.depth;
+				}
+				if ((node.aStarScore < lowestAstarScore) || (node.aStarScore === lowestAstarScore && randrange(0, 1) === 1)) {
+					lowestAstarScoreNode = node;
+					lowestAstarScore = node.aStarScore;
+				}
+			}
+		}
+		if (lowestAstarScore === 999999) return 'error: NO OPEN NODES';
+		return lowestAstarScoreNode;
+	};
+
+	const aStarFromTo = (inputNode, destinationNode, maxDepth = 100, currentDepth = 0) => {
+		numAstarCalls += 1;
+
+		if (currentDepth === 0) {
+			openNodes = [];
+			exploredPositions = [];
+			openPositions = [];
+		}
+
+		const idx = openNodes.indexOf(inputNode);
+		if (idx > -1) openNodes.splice(idx, 1);
+
+		const posStr = JSON.stringify(inputNode.position);
+		let pIdx;
+		while ((pIdx = openPositions.indexOf(posStr)) > -1) {
+			openPositions.splice(pIdx, 1);
+		}
+
+		inputNode.status = 'explored';
+		exploredPositions.push(posStr);
+
+		const newOpenNodes = findNewOpenNodes(inputNode);
+		if (typeof newOpenNodes === 'string') return [0, newOpenNodes];
+
+		openNodes = openNodes.concat(newOpenNodes);
+		if (openNodes.length === 0) return [0, 'openNodes was empty'];
+
+		const lowestAstarScoreNode = findLowestOpenNode(destinationNode, openNodes, exploredPositions);
+
+		if (lowestAstarScoreNode === undefined || (typeof lowestAstarScoreNode === 'string' && lowestAstarScoreNode.includes('error'))) {
+			return [0, lowestAstarScoreNode ?? 'undefined node'];
+		}
+
+		if (JSON.stringify(lowestAstarScoreNode.position) === JSON.stringify(destinationNode.position)) {
+			let currentNode = lowestAstarScoreNode;
+			const output = [currentNode.position];
+			while (currentNode.parent) {
+				output.unshift(currentNode.parent.position);
+				currentNode = currentNode.parent;
+			}
+			return [1, output];
+		} else if (currentDepth >= maxDepth) {
+			return [0, 'Max Depth Reached'];
+		} else {
+			return aStarFromTo(lowestAstarScoreNode, destinationNode, maxDepth, currentDepth + 1);
+		}
+	};
+
+	// --- Board Initialization Logic ---
+	if (!hlines || !vlines) {
+		hlines = [];
+		vlines = [];
+		for (let x = 0; x <= H_CELL_COUNT; x++) {
+			hlines[x] = [];
+			vlines[x] = [];
+			for (let y = 0; y <= V_CELL_COUNT; y++) {
+				hlines[x][y] = [true, 0];
+				vlines[x][y] = [true, 0];
+			}
+		}
+
+		let killswitch = 0;
+		for (let randInc = 0; randInc < H_CUT_COUNT; randInc++) {
+			if (killswitch >= 1000) break;
+			let randx = Math.floor(H_CELL_COUNT * Math.random());
+			let randy = Math.floor(V_CELL_COUNT * Math.random());
+
+			while (hlines[randx][randy][0] === false) {
+				randx = Math.floor(H_CELL_COUNT * Math.random());
+				randy = Math.floor(V_CELL_COUNT * Math.random());
+			}
+
+			if (!(randx === 0 && randy === 0)) {
+				hlines[randx][randy][0] = false;
+				hlines[randx][randy][1] = -1;
+			}
+
+			const hStartNode = new GenericNode('hStartNode', { x: randx, y: randy }, undefined, 'explored');
+			const hEndNode = new GenericNode('hEndNode', { x: randx + 1, y: randy }, undefined, 'unexplored');
+
+			if (aStarFromTo(hStartNode, hEndNode, 40)[0] !== 1) {
+				hlines[randx][randy][0] = true;
+				hlines[randx][randy][1] = 0;
+				randInc--;
+				killswitch++;
+			}
+		}
+
+		killswitch = 0;
+		for (let randInc = 0; randInc < V_CUT_COUNT; randInc++) {
+			if (killswitch >= 1000) break;
+			let randx = Math.floor(H_CELL_COUNT * Math.random());
+			let randy = Math.floor(V_CELL_COUNT * Math.random());
+
+			while (vlines[randx][randy][0] === false) {
+				randx = Math.floor(H_CELL_COUNT * Math.random());
+				randy = Math.floor(V_CELL_COUNT * Math.random());
+			}
+
+			if (!(randx === 0 && randy === 0)) {
+				vlines[randx][randy][0] = false;
+				vlines[randx][randy][1] = -1;
+			}
+
+			const vStartNode = new GenericNode('vStartNode', { x: randx, y: randy }, undefined, 'explored');
+			const vEndNode = new GenericNode('vEndNode', { x: randx, y: randy + 1 }, undefined, 'unexplored');
+
+			if (aStarFromTo(vStartNode, vEndNode, 40)[0] !== 1) {
+				vlines[randx][randy][0] = true;
+				vlines[randx][randy][1] = 0;
+				randInc--;
+				killswitch++;
+			}
+		}
+
+		try {
+			localStorage.setItem('hlines', JSON.stringify(hlines));
+			localStorage.setItem('vlines', JSON.stringify(vlines));
+		} catch (e) {
+			console.warn("Storage write deferred", e);
+		}
+	}
+
+	// --- Main Scene Creation ---
+	const drawBoard = () => {
+		const scene = new THREE.Scene();
+		const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+		camera.position.set(0, 0.01, 500);
+
+		const focalPoint = new THREE.Vector3(0, 0, 0);
+
+		Array.from(document.querySelectorAll('canvas')).forEach(canvas => canvas.remove());
+		const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+		renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+		renderer.setSize(window.innerWidth, window.innerHeight);
+		renderer.setClearColor(0x000000, 1);
+		document.body.appendChild(renderer.domElement);
+
+		const controls = new OrbitControls(camera, renderer.domElement);
+		controls.target.copy(focalPoint);
+		controls.update();
+
+		const ambientLight = new THREE.AmbientLight(0xffffff);
+		scene.add(ambientLight);
+
+		const directionalLight = new THREE.DirectionalLight(0xffffff);
+		directionalLight.position.set(2, 2, 5).normalize();
+		scene.add(directionalLight);
+
+		const baseGeometry = new PLANE_GEOMETRY_CTOR(CW, CH);
+		const baseMaterial = makeSurfaceMaterial({ color: 0xFFFFFF, side: THREE.DoubleSide });
+		const plane = new THREE.Mesh(baseGeometry, baseMaterial);
+		plane.position.set(0, 0, 0);
+		scene.add(plane);
+
+		const lineColor = 0xCCCCCC;
+		let roadWidth = CELL_W * ROAD_W_RATIO;
+		let roadHeight = CELL_H * ROAD_H_RATIO;
+
+		for (let x = 0; x <= BW; x += CELL_W) {
+			for (let xc = 0; xc < V_CELL_COUNT; xc++) {
+				if (vlines[Math.floor(x / CELL_W)][xc][0]) {
+					const roadXpos = x + PADDING;
+					const roadYpos = (PADDING + (xc * CELL_W) + (roadHeight * 0.5)) + (roadWidth * 0.5);
+					const geometry = new PLANE_GEOMETRY_CTOR(roadWidth, roadHeight);
+					const material = makeSurfaceMaterial({ color: lineColor, side: THREE.DoubleSide });
+					const laneMesh = new THREE.Mesh(geometry, material);
+					laneMesh.position.set(roadXpos - (CW * 0.5), roadYpos - (CH * 0.5), 0.5);
+					scene.add(laneMesh);
+				}
+			}
+		}
+
+		roadWidth = CELL_H * ROAD_H_RATIO;
+		roadHeight = CELL_W * ROAD_W_RATIO;
+		for (let y = 0; y <= BH; y += CELL_H) {
+			for (let yc = 0; yc < H_CELL_COUNT; yc++) {
+				if (hlines[yc][Math.floor(y / CELL_H)][0]) {
+					const roadXpos = (PADDING + (yc * CELL_H)) + (roadWidth * 0.5);
+					const roadYpos = (y + PADDING) + (roadHeight * 0.5);
+					const geometry = new PLANE_GEOMETRY_CTOR(roadWidth, roadHeight);
+					const material = makeSurfaceMaterial({ color: lineColor, side: THREE.DoubleSide });
+					const laneMesh = new THREE.Mesh(geometry, material);
+					laneMesh.position.set(roadXpos - (CW * 0.5), roadYpos - (CH * 0.5), 0.5);
+					scene.add(laneMesh);
+				}
+			}
+		}
+
+		const cubes = [];
+		let populatedPoints = [];
+		for (let i = 0; i < 800; i++) {
+			const geometry = new THREE.BoxGeometry(1, 1, 5);
+			const randomColor = getRandomVibrantHex();
+			const material = makeSurfaceMaterial({ color: randomColor });
+			cubes[i] = {};
+			cubes[i].cube = new THREE.Mesh(geometry, material);
+
+			let currX = Math.floor(Math.random() * 40);
+			let currY = Math.floor(Math.random() * 40);
+
+			while (populatedPoints[currX]?.[currY]) {
+				currX = Math.floor(Math.random() * 40);
+				currY = Math.floor(Math.random() * 40);
+			}
+			if (!populatedPoints[currX]) populatedPoints[currX] = [];
+			populatedPoints[currX][currY] = 1;
+
+			const startPos = { x: currX, y: currY };
+			const currPos = pointToSpace(startPos);
+			cubes[i].cube.position.set(currPos.x, currPos.y, 4.1);
+			cubes[i].cubeSpeed = 0.5;
+			scene.add(cubes[i].cube);
+			cubes[i].cubeState = "moving";
+
+			const startNode = new GenericNode('startNode', startPos, undefined, 'explored');
+			const destPos = { x: Math.floor(Math.random() * 40), y: Math.floor(Math.random() * 40) };
+			const endNode = new GenericNode('endNode', destPos, undefined, 'unexplored');
+
+			const pathResult = aStarFromTo(startNode, endNode, 500, 0);
+			cubes[i].cubePath = pathResult[0] === 1 ? pathResult[1] : [];
+		}
+		populatedPoints = [];
+
+		camera.lookAt(focalPoint);
+
+		const render = () => {
+			renderLogFrame += 1;
+
+			for (const cubeObj of cubes) {
+				const cube = cubeObj.cube;
+
+				if (cubeObj.cubePath?.length > 0 && cubeObj.cubeState === "moving") {
+					const destPosition = pointToSpace(cubeObj.cubePath[0]);
+					cube.position.x += cubeObj.cubeSpeed * Math.sign(destPosition.x - cube.position.x);
+					cube.position.y += cubeObj.cubeSpeed * Math.sign(destPosition.y - cube.position.y);
+
+					if (Math.abs(cube.position.x - destPosition.x) < cubeObj.cubeSpeed && Math.abs(cube.position.y - destPosition.y) < cubeObj.cubeSpeed) {
+						cubeObj.cubePath.splice(0, 1);
+						if (cubeObj.cubePath.length === 0) {
+							cubeObj.cubeState = "waiting";
+						}
+					}
+				} else {
+					cubeObj.cubeState = "waiting";
+				}
+			}
+
+			controls.update();
+			resetRenderInfo(renderer);
+			renderer.render(scene, camera);
+
+			if (renderLogFrame % 120 === 0) {
+				const info = renderer.info.render ?? {};
+				const px = sampleCanvasCenter(renderer);
+				const camPos = camera.position ? [camera.position.x, camera.position.y, camera.position.z] : [0, 0, 0];
+				const isValidCam = camPos.every(v => typeof v === 'number' && !isNaN(v));
+
+				const hudLine = `frame ${renderLogFrame} | calls ${info.calls ?? 0} | tris ${info.triangles ?? 0} | px ${px.join(',')} | cam ${isValidCam ? camPos.map(v => v.toFixed(1)).join(',') : 'INVALID[' + camPos.join(',') + ']'} | valid:${isValidCam ? 'yes' : 'NO'}`;
+				updateDiagHud(hudLine);
+			}
+			requestAnimationFrame(render);
+		};
+		render();
+	};
+
+	drawBoard();
+</script>
+
+</html>

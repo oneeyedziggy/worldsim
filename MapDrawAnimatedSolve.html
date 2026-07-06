@@ -1,0 +1,1023 @@
+<html>
+    <head>  	
+		<style>
+			body {
+			    background: grey;
+			}
+
+			canvas {
+			    background: #fff;
+			    margin: 20px;
+			}
+		</style>
+		<title>Maze Draw!</title>		
+    </head>
+    <body>
+    </body>
+	<script>
+		//aStarGlobals ;
+		var debugOn = 0;
+		var strokePathOn = 0;
+		var strokeExploredOn = 0;
+		var strokeOpenOn = 0;
+		var slowMode = 0;
+		var openNodes = [];
+		var exploredPositions = [];
+		var openPositions = [];
+		var numAstarCalls = 0;
+		
+		var genericNode = function(iname, iposition, iparent, istatus, idepth){
+			this.name = iname;
+			this.parent = iparent;
+			this.depth = idepth || 0; //the depth of this node in the chain;
+			this.position = iposition;
+			this.aStarScore = undefined;
+			this.position = iposition;
+			this.status = istatus || 'unexplored'; //unexplored, explored, and open are valid states;
+		};
+	
+	
+	
+		"use strict";
+		//grid width and height;
+		var bw = 400;
+		var bh = 400;
+		//padding around grid;
+		var padding = 10;
+		var hcellcount = 40;
+		var vcellcount = 40;
+		var hcutRate = 0.40;
+		var vcutRate = 0.40;
+		var potentiallyUnconnectedHNodes = [];
+		var potentiallyUnconnectedVNodes = [];
+		var hcutCount = Math.floor(hcellcount * vcellcount * (hcutRate));
+		var vcutCount = Math.floor(hcellcount * vcellcount * (vcutRate));
+
+		//calc canvas width and height from base maze dimensions and padding values ;
+		var cw = bw + (padding*2) + 1; 
+		var ch = bh + (padding*2) + 1;
+		//calc cell sizes from base map dimensions and desired cell counts in each dimension;
+		var cellW = Math.floor(bw/hcellcount);
+		var cellH = Math.floor(bh/vcellcount);
+
+		//declare and create canvas, then inject into document;
+		var canvas = document.createElement("canvas");
+		//canvas.setAttribute("style", "width:"+cw.toString()+"px; height:"+ch.toString()+"px;");
+		canvas.setAttribute("height", ch);
+		canvas.setAttribute("width", cw);
+		document.body.appendChild(canvas);
+
+		var context = canvas.getContext("2d");
+
+		//declare and initialize h and v lines of full grid;
+		//comment these to get a new map each time, uncomment to use the same map as last time;
+		//hlines = JSON.parse(localStorage.getItem('hlines'));
+		//vlines = JSON.parse(localStorage.getItem('vlines'));
+		if(!hlines || !vlines){
+			//console.log(!hlines);
+			//console.log(!vlines);
+			var hlines = [];
+			var vlines = [];
+			for(var x = 0; x < hcellcount; x++){ 
+				hlines[x] = [];
+				vlines[x] = [];
+				for(var y = 0; y < vcellcount; y++){
+					hlines[x][y] = [];
+					vlines[x][y] = [];
+					//set the validity of h and v paths;
+					hlines[x][y][0] = true;
+					vlines[x][y][0] = true;
+					//set the wear rate/cost of the paths;
+					hlines[x][y][1] = 0;
+					vlines[x][y][1] = 0;
+				};
+			};
+			
+			//line x or y is below and/or right of point x or y;
+			//so line x is right of point x, line x-1 is left of point x;
+			//and line y is below point y, line y-1 is above point y;
+			var killswitch = 0;
+			//false-out some of the hlines based on the defined cut rate;
+			for(var randInc = 0; randInc < hcutCount; randInc++){
+				if(killswitch >= 1000){
+					break;
+				};
+				if(debugOn){
+					console.log('H randInc: '+ randInc.toString());
+				};
+				var randx = Math.floor(hcellcount * Math.random());
+				var randy = Math.floor(vcellcount * Math.random());
+				
+				//keep looping through until you find a path that hasn't been removed yet
+				while(hlines[randx][randy][0] == false){
+					var randx = Math.floor(hcellcount * Math.random());
+					var randy = Math.floor(vcellcount * Math.random());
+				};
+				
+				//make sure the first bar stays... may not be needed any more
+				if(!(randx === 0 && randy === 0)){
+					hlines[randx][randy][0] = false;
+					hlines[randx][randy][1] = -1;
+				};
+				
+				//reset these
+				openNodes = [];
+				exploredPositions = [];
+				openPositions = [];
+				numAstarCalls = 0;
+				
+				var hStartNode = new genericNode('hStartNode',{'x':randx,'y':randy}, undefined, 'explored');
+				var hEndNode = new genericNode('hEndNode',{'x':(randx+1),'y':randy}, undefined, 'unexplored');
+				//if you can't path from one end to the other of the removed node in 40 steps or fewer after removing it, put it back and try again on another random node
+				if(debugOn){
+					console.log('hStartNode:');
+					console.log(hStartNode);
+					console.log('hEndNode:');
+					console.log(hEndNode);
+					console.log(JSON.stringify({'randx':randx,'randy':randy}));
+					console.log(aStarFromTo(hStartNode, hEndNode, 40));
+				};
+				if(aStarFromTo(hStartNode, hEndNode, 40)[0] != 1){
+					hlines[randx][randy][0] = true;
+					hlines[randx][randy][1] = 0;
+					randInc--; //this could introduce infinite loops;
+					killswitch++;
+				}
+			};
+			
+			killswitch = 0;
+			//false-out some of the vlines;
+			for(var randInc = 0; randInc < vcutCount; randInc++){
+				
+				if(killswitch >= 1000){
+					break;
+				};
+				if(debugOn){
+					console.log('V randInc: '+ randInc.toString());
+				};
+				randx = Math.floor(hcellcount * Math.random());
+				randy = Math.floor(vcellcount * Math.random());
+				
+				//keep looping through until you find a path that hasn't been removed yet
+				while(vlines[randx][randy][0] == false){
+					randx = Math.floor(hcellcount * Math.random());
+					randy = Math.floor(vcellcount * Math.random());
+				};
+				
+				//make sure the first bar stays... may not be needed any more
+				if(!(randx === 0 && randy === 0)){
+					vlines[randx][randy][0] = false;
+					vlines[randx][randy][1] = -1;
+				};
+				
+				//reset these
+				openNodes = [];
+				exploredPositions = [];
+				openPositions = [];
+				numAstarCalls = 0;
+				
+				var vStartNode = new genericNode('vStartNode',{'x':randx,'y':randy}, undefined, 'explored');
+				var vEndNode = new genericNode('vEndNode',{'x':randx,'y':(randy+1)}, undefined, 'unexplored');
+				//if you can't path from one end to the other of the removed node in 40 steps or fewer after removing it, put it back and try again on another random node
+				if(debugOn){
+					console.log('vStartNode:');
+					console.log(vStartNode);
+					console.log('vEndNode:');
+					console.log(vEndNode);
+					console.log(JSON.stringify({'randx':randx,'randy':randy}));
+					console.log(aStarFromTo(vStartNode, vEndNode, 40));
+				};
+				if(aStarFromTo(vStartNode, vEndNode, 40)[0] != 1){
+					vlines[randx][randy][0] = true;
+					vlines[randx][randy][1] = 0;
+					randInc--; //this could introduce infinite loops;
+					killswitch++;
+				}	
+			};
+			
+			//save current map to localStorage
+			localStorage.setItem('hlines',JSON.stringify(hlines));
+			localStorage.setItem('vlines',JSON.stringify(vlines));
+		};
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		////!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		////aStarDiuagnostic section;
+		strokePathOn = 1;
+		strokeExploredOn = 1;
+		strokeOpenOn = 1;
+		slowMode = 1;
+		
+		openNodes = [];
+		exploredPositions = [];
+		openPositions = [];
+		numAstarCalls = 0;
+		
+		var startNode = new genericNode('startNode',{'x':0,'y':0}, undefined, 'explored');
+		var endNode = new genericNode('endNode',{'x':39,'y':39}, undefined, 'unexplored');
+		console.time('PathingTook(ms)');
+		//this is the call that starts the pathing;
+		console.log('aStarFromTo(startNode, endNode, 500, 0) result:'); //1600;
+		console.log(aStarFromTo(startNode, endNode, 220)); //1600;
+		console.timeEnd('PathingTook(ms)');
+		////!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		
+		//show at the end whether there's overlap between explored and open, and if so, how much;
+		var overlapInExploredAndOpen = [];
+		for(var i=0;i<openPositions.length;i++){
+			//console.log(exploredPositions.indexOf(openPositions[i]));
+			if(exploredPositions.indexOf(openPositions[i]) > -1 ){
+				overlapInExploredAndOpen.push(openPositions[i] + ' occurs in exploredPositions as well');
+			};
+		};
+		/*for(var i=0;i<exploredPositions.length;i++){
+			//console.log(exploredPositions.indexOf(openPositions[i]));
+			if(openPositions.indexOf(exploredPositions[i]) > -1 ){
+				overlapInExploredAndOpen.push(exploredPositions[i] + ' occurs in openPositions as well');
+			};
+		};*/
+		
+		if(debugOn){
+			console.log('openPositions:');
+			console.log(openPositions);
+			console.log('exploredPositions:');
+			console.log(exploredPositions);
+			console.log("overlapInExploredAndOpen:");
+			console.log(overlapInExploredAndOpen);
+			console.log("open nodes that occur in explored nodes list too: "+overlapInExploredAndOpen.length);
+			console.log('there were '+numAstarCalls+' calls of aStarFromTo');
+		};
+		
+		function findNewOpenNodes(inputNode){
+		//returns array of x,y,available w/o checking for non-negative x's and y's;
+			if(inputNode.position){
+				var availableNodesUDRL = getUDRLAvailability(inputNode.position.x,inputNode.position.y);
+			}else{
+				return "error: invalid inputNode.position";
+			};
+			var nodeIndexNames = ['Up','Down','Right','Left'];
+			var newOpenNodes = [];
+			if(debugOn){
+				console.log('inputNode.position'+JSON.stringify(inputNode.position));
+				console.log('availableNodesUDRL:');
+				console.log(availableNodesUDRL);
+			};
+			for(var node in availableNodesUDRL){
+				if(debugOn){
+					console.log('looping through nodes, on:');
+					console.log(availableNodesUDRL[node]);
+				};
+				if (availableNodesUDRL[node][2] != -1){ 
+					if(debugOn){
+						console.log('Made it this far, node not outside map');
+						console.log('inputNode.depth='+inputNode.depth);
+					};
+					var potentialNewOpen = JSON.stringify({"x":availableNodesUDRL[node][0],"y":availableNodesUDRL[node][1]});
+					if(debugOn){
+						console.log('potentialNewOpen:'+potentialNewOpen + ' currentNodePos:' + JSON.stringify(inputNode.position));
+					};
+					if(openPositions.indexOf(potentialNewOpen) == -1){ 
+						if(exploredPositions.indexOf(potentialNewOpen) == -1){ //this is failing infrequently for some reason... not a big deal, but slows things slightly;
+							if(debugOn){
+								console.log('(inputNode.depth + 1):'+(inputNode.depth + 1));
+							};
+							openPositions.push(potentialNewOpen);
+							//paint this as an open node;
+							
+							if(strokeOpenOn){
+								strokePath(inputNode.position, "{'x':"+availableNodesUDRL[node][0]+",'y',"+availableNodesUDRL[node][1]+'}', 'yellow');
+							};
+							if(debugOn){
+								console.log('putting node in open nodes list');
+							};
+							newOpenNodes.push(new genericNode(nodeIndexNames[node],{'x':availableNodesUDRL[node][0],'y':availableNodesUDRL[node][1]}, inputNode, 'open', (inputNode.depth + 1))); 
+						}else{
+							if(debugOn){
+								console.log('node already in exploredPositions list');
+							};
+						};
+					}else{
+						if(debugOn){
+							console.log('node already in openPositions list');
+						};
+					};
+				}else{
+					if(debugOn){
+						console.log('node outside of map');
+					};
+				};
+			};
+			if(debugOn){
+				console.log('new nodes to add to open list: ');
+				console.log(newOpenNodes);
+			};
+			return newOpenNodes;
+		};
+		
+		function findLowestOpenNode(inputNode, openNodes, exploredPositions, currentDepth){
+			//calculate what the lowest score open node is for use later;
+			if(openNodes.length == 0){
+				var output = 'insufficient open paths';
+			}else if(openNodes.length == 1){
+				var lowestAstarScoreNode = openNodes[0];
+				var output = lowestAstarScoreNode;
+			}else{
+				var lowestAstarScoreNode = {};
+				var lowestAstarScore = 999999;
+				var potentialNode={};
+				for(var node in openNodes){
+					node = openNodes[node];
+					if(debugOn){
+						console.log('considering the following node inside findLowestOpenNode');
+						console.log(node);
+					};
+					if(exploredPositions.indexOf(JSON.stringify(node.position)) == -1){
+						if(debugOn){
+							console.log('this should only ever be -1 == '+ exploredPositions.indexOf(JSON.stringify(node.position)).toString());
+						};
+						var originalNodeaStarScore = node.aStarScore;
+						if(!originalNodeaStarScore){
+							//astar score = orthagonal dist traveled times diagonal dist to goal;
+							node.aStarScore = node.aStarScore || (4*Math.sqrt(Math.pow((node.position.x - inputNode.position.x),2) + Math.pow((node.position.y - inputNode.position.y),2))*1) + node.depth;
+							//node.aStarScore = node.aStarScore || Math.abs(node.position.x - inputNode.position.x) + Math.abs(node.position.y - inputNode.position.y) + node.depth;
+							if((node.position.x == 10 && node.position.y == 10)||(node.position.x == 20 && node.position.y == 20)||(node.position.x == 30 && node.position.y == 30)){
+								
+								if(debugOn){
+									console.log('preexisting node.aStarScore = '+originalNodeaStarScore);
+								};
+								//console.log(JSON.stringify(node.position) + ': node.aStarScore=' + node.aStarScore.toString() + '; distToDest=' + (2*Math.sqrt(Math.pow((node.position.x - inputNode.position.x),2) + Math.pow((node.position.y - inputNode.position.y),2))*1).toString() + '; node.depth=' + node.depth + '; node.status='+node.status);
+							};
+						}else{
+							if(debugOn){
+								//TODO not sure of this is necessary, may be part of another path, but may have a different astar score as part of this path but whatever got to it first is likely shortest... idk if this ever gets reached w/o overlap in open and explored;
+								console.log('node already had astar score, not assigning new one');
+							};
+						};
+						if((node.aStarScore < lowestAstarScore)||(node.aStarScore == lowestAstarScore && randrange(0,1) == 1)){
+							lowestAstarScoreNode = node;
+							lowestAstarScore = node.aStarScore;
+						};
+						
+						var output = lowestAstarScoreNode;
+						if(lowestAstarScoreNode == {} || lowestAstarScore == 999999){
+							//you've reached a dead end/painted yourself into a corner and/or are likely stuck on an island isolated from the destination node.;
+							output = 'error: NO OPEN NODES';
+						};
+					}else{
+						if(debugOn){
+							console.log('node already in explored list');
+						};
+					};
+				};
+			};
+			return output;
+		};
+		
+		//Response Codes:;
+		// [0] = 0 - success, [1] = array of coordinates like: '{"x":0,"y":0}', path ordered start to finish;
+		// [0] = 1 - success, [1] = string: reason for incomplete: max depth, no open nodes, etc.;
+		function aStarFromTo(inputNode, destinationNode, maxDepth, currentDepth){
+			numAstarCalls += 1;
+			if(inputNode.parent){
+				if(strokeOpenOn){
+					strokePath(inputNode.position, inputNode.parent.position, 'orange');
+				};
+				//strokePath(inputNode.position, inputNode.parent.position, 'yellow');
+				if(inputNode.parent.parent && strokeExploredOn){
+					strokePath(inputNode.parent.position, inputNode.parent.parent.position, 'green');
+				};
+			};
+			
+			
+			maxDepth = maxDepth || 100;
+			currentDepth = currentDepth || 0;
+			//remove the input node from open nodes;
+			if(debugOn){ //on the first node this does fuckall;
+				console.log('inputNode is at position ' + openNodes.indexOf(inputNode) + ' of open nodes');
+				
+				console.log('removing the following node from open nodes');
+				console.log(inputNode);
+			};
+			openNodes.splice(openNodes.indexOf(inputNode), 1); 
+			
+			if(debugOn){ //on the first node this does fuckall;
+				console.log('after attempted removal, inputNode is at position ' + openNodes.indexOf(inputNode) + ' of open nodes');
+			};
+			if(debugOn){
+				//remove the position of the input node from open positions list as well;
+				console.log('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');		
+				console.log(openPositions.indexOf(JSON.stringify(inputNode.position)));
+				console.log('op b4');
+				console.log(openPositions);
+				console.log('removing ' + JSON.stringify(inputNode.position));
+			};
+			//why the fuck doesn't this work unless I do it twice?;
+			openPositions.splice(openPositions.indexOf(JSON.stringify(inputNode.position), 1));
+			openPositions.splice(openPositions.indexOf(JSON.stringify(inputNode.position), 1));
+			if(debugOn){
+				console.log('BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB');		
+				console.log(openPositions.indexOf(JSON.stringify(inputNode.position)));
+				console.log(openPositions);	
+			};
+	 
+			inputNode.status = 'explored';
+			exploredPositions.push(JSON.stringify(inputNode.position));
+			if(debugOn){ 
+				console.log('explored positions after adding inputNode:');
+				console.log(exploredPositions);
+			};
+			//concat a new list of open nodes based on the input node;
+			var newOpenNodes = findNewOpenNodes(inputNode);
+			if(debugOn){
+				console.log('newOpenNodes: ');
+				console.log(newOpenNodes);
+				console.log('newOpenNodes length = '+newOpenNodes.length.toString());
+				for(var node in newOpenNodes){
+					console.log('newOpenNodes['+node.toString()+']');
+					console.log(newOpenNodes[node]);
+				};
+			};
+			if(debugOn){
+				console.log('open nodes list before add: ');
+				console.log(openNodes);
+				console.log('b4 open nodes length = '+openNodes.length.toString());
+				for(var node in openNodes){
+					console.log('b4 openNodes['+node.toString()+']');
+					console.log(openNodes[node]);
+				};
+			};
+			openNodes = openNodes.concat(newOpenNodes);
+			if(debugOn){
+				console.log('open nodes list after add: ');
+				console.log(openNodes);
+				console.log('openNodes[0]');
+				console.log(openNodes[0]);
+				console.log('open nodes length = '+openNodes.length.toString());
+				console.log('exploredPositions length = '+exploredPositions.length.toString());
+				for(var node in openNodes){
+					console.log('openNodes['+node.toString()+']');
+					console.log(openNodes[node]);
+				};
+				for(var node in exploredPositions){
+					console.log('exploredPositions['+node.toString()+']');
+					console.log(exploredPositions[node]);
+				};
+			};
+			if(exploredPositions.length == 0){
+				console.log('error: exploredPositions was empty inside aStarFromTo()');
+				console.log(exploredPositions);
+				return [ 0, 'error: exploredPositions was empty inside aStarFromTo()'];
+			};
+			
+			if(openNodes.length == 0){
+				//console.log('error: openNodes was empty inside aStarFromTo()');
+					
+				if(debugOn){
+					console.log(openNodes);
+				};
+				return [ 0, 'openNodes was empty, so there are no more valid nodes (inside aStarFromTo())'];
+			};
+			var lowestAstarScoreNode = findLowestOpenNode(destinationNode, openNodes, exploredPositions, currentDepth);
+						
+			if(lowestAstarScoreNode == undefined){
+				if(debugOn){
+					console.log('lowestAstarScoreNode was undefined, so there were no more valid, unexplored nodes');
+				};
+				return [ 0, 'lowestAstarScoreNode was undefined, so there were no more valid, unexplored nodes (inside aStarFromTo())'];
+			}else if(typeof lowestAstarScoreNode == 'string' && lowestAstarScoreNode.indexOf('error') > -1){
+				return [ 0, lowestAstarScoreNode];
+			};
+			
+			//evaluate whether at end or max depth and do the needful;
+			if((JSON.stringify(lowestAstarScoreNode.position) == JSON.stringify(destinationNode.position))){
+				currentNode = lowestAstarScoreNode;
+				if(debugOn){
+					console.log("current traveled : "+currentNode.depth.toString());
+				};
+				currentNode.name += ".endNode";
+				var output = [currentNode.name + ' ' + JSON.stringify(currentNode.position)];
+				var outputAsNodes = [currentNode];
+				while(currentNode.parent){
+					//prepend current node info since we're going backwards;
+					output.unshift(currentNode.parent.name + ' ' + JSON.stringify(currentNode.parent.position));
+					outputAsNodes.unshift(currentNode.parent);
+					currentNode = currentNode.parent;
+				};
+				if(debugOn){
+					console.log("current long depth : "+currentDepth.toString());
+				};
+				var currpos = outputAsNodes[0].position;
+				if(strokePathOn){
+					for(var node in outputAsNodes){
+						node = outputAsNodes[node];
+						strokePath(node.position, currpos, 'red');
+						currpos = node.position;
+					};
+				};
+				return [ 1, output];
+			}else if(currentDepth >= maxDepth){ //lowestAstarScoreNode.depth;
+				var currentNode = lowestAstarScoreNode;
+				output = 'Max Depth Reached';
+				if(debugOn){
+					
+					console.log('Last Explored Node: ('+currentNode.name + ' ' + JSON.stringify(currentNode.position)+ ')');
+				};
+				//return the path so-far;
+				//while(currentNode.parent){
+				//	//prepend current node info since we're going backwards;
+				//	output.unshift(currentNode.parent.name + ' ' + JSON.stringify(currentNode.parent.position));
+				//	currentNode = currentNode.parent;
+				//};
+				return [ 0, output];
+			}else{
+				//if you're not at the goal and lower than max steps, ;
+				//TODO:modify this to minimize "depth" and bring it closer to path length.;
+				//fast, not as cool to watch //880-950 //730-750;
+				
+				//console.log('currentDepth:'+currentDepth);
+				if(openNodes.length == 0){
+					return [ 0, 'no more open nodes'];
+				};
+				
+				if(slowMode){
+					setTimeout(function(){aStarFromTo(lowestAstarScoreNode , destinationNode, maxDepth, (currentDepth+1))},30);
+				}else{
+					//not returning a status code here b/c all other returns are status code, and will pass back up the chain;
+					return aStarFromTo(lowestAstarScoreNode , destinationNode, maxDepth, (currentDepth+1));
+				};
+				//slow/cinematic;
+				//
+			};
+			
+		};
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		function strokePath(pos1, pos2, color){
+			if(color != 'red'){
+				//color = '#'+Math.floor(Math.random()*16777215).toString(16);
+			};
+			if(pos1.x == pos2.x || pos1.y == pos2.y){
+				context.strokeStyle = color;//'#FF0000';//'#'+Math.floor(Math.random()*16777215).toString(16);
+				context.beginPath();
+				context.lineWidth = 3;
+				context.moveTo( (pos1.x * cellW) + padding + 0.5, (pos1.y * cellH) + padding + 0.5);
+				context.lineTo( (pos2.x * cellW) + padding + 0.5, (pos2.y * cellH) + padding + 0.5);
+				context.stroke();
+			}else{
+				return "error: path is diagonal";
+			};
+		};
+
+		//Draw out the hlines and vlines arrays;
+		function drawBoard(){
+			//for each position, biased half a pixel right, and incremented by sell width, draw vertical lines;
+		    for (var x = 0.5; x <= bw-0.5; x += cellW) {
+		        for (var xc = 0; xc < hcellcount-1; xc++){
+					//if the line at the coord derived from the current x and cell width;
+		            if(vlines[Math.floor((x-0.5)/cellW)][xc][0]){
+					   context.strokeStyle = '#000000';
+					   context.beginPath();
+					   context.lineWidth = 1;
+					   context.moveTo( x + padding, padding + (xc * cellW));
+					   context.lineTo( x + padding, padding + ((xc+1) * cellW));
+					   context.stroke();
+		            };
+		        };
+		    };
+			
+			//for each position, biased half a pixel right, and incremented by sell width, draw horizontal lines;
+		    for (var y = 0.5; y <= bh-0.5; y += cellH) {
+		        for (var yc = 0; yc < vcellcount; yc++){
+		            if(hlines[yc][Math.floor((y-0.5)/cellH)][0]){
+					    context.strokeStyle = '#000000';
+					    context.beginPath();
+					    context.lineWidth = 1;
+		                context.moveTo(padding + (yc * cellH), y + padding);
+		                context.lineTo(padding + ((yc+1) * cellH), y + padding);
+					    context.stroke();
+		            };
+		        };
+		    };
+
+		    context.strokeStyle = "black";
+		    context.stroke();
+		};
+
+		drawBoard();
+		
+		function getUDRLAvailability(x,y){
+			//line x or y is below and/or right of point x or y;
+			//so line x is right of point x, line x-1 is left of point x;
+			//and line y is below point y, line y-1 is above point y;
+			
+			//output is x and y of available node and a bit for weather the node is available;
+			if(x >= 0 && x < hcellcount && y >= 0 && y < vcellcount){
+				var udrl = [];
+				if(y>0){
+					udrl.push([x,y-1,vlines[x][y-1][1]]); //up;
+					//console.log('a1');
+				}else{
+					//console.log('a');
+					udrl.push([x,y-1,-1]); //up;
+				};
+				if(y < (vcellcount-1)){
+					udrl.push([x,y+1,vlines[x][y][1]]); //down;
+					//console.log('b1');
+				}else{
+					//console.log('b');
+					udrl.push([x,y+1,-1]); //down;
+				};
+				if(x < (hcellcount-1)){
+					udrl.push([x+1,y,hlines[x][y][1]]); //right;
+					//console.log('c1');
+				}else{
+					//console.log('c');
+					udrl.push([x+1,y,-1]); //right;
+				};
+				if(x>0){
+					udrl.push([x-1,y,hlines[x-1][y][1]]); //left;
+					//console.log('d1');
+				}else{
+					//console.log('d');
+					udrl.push([x-1,y,-1]); //left;
+				};
+			};
+			return udrl;
+		};
+		
+		function floodConnect(){	
+			//add one since these are edges, not cells;
+			var hColBase = hcellcount + 1;
+			var vColBase = vcellcount + 1;
+			//multiply b/c there's a cell in each column of each row;
+			var hCellTotal = hColBase * vColBase;
+			var vCellTotal = hCellTotal;
+			//reduce by cut rate;
+			var hCellActual = hCellTotal * (1-hcutRate);
+			var vCellActual = vCellTotal * (1-vcutRate);
+			//sum;
+			var hvExpectedTotal = hCellActual + vCellActual;
+		
+			var initialPoint = {x:0,y:0};			
+			var openSet = [{x:0,y:0}];
+			var currUDRL = [];
+			var currX = 0;
+			var currY = 0;
+			var currExploredVal = 0;
+			var floodedTotal = 0;
+			var override = 0;
+			var start = (new Date).getTime();
+			while(floodedTotal < hvExpectedTotal){
+				floodedTotal = 0;
+				currExploredVal = 0;
+
+				while(openSet.length > 0 && override < 10){
+				console.log(openSet);
+					override++;
+					for(var i=0;i<openSet.length;i++){ //for all openset;
+						currX = openSet[i].x;
+						currY = openSet[i].y;
+						currUDRL = getUDRLAvailability(currX,currY);
+						for(var j=0;j<4;j++){ //and each adjacent node to the openset;
+							//if unexplored, add to open set;
+							console.log(openSet);
+							if(currUDRL[j][2] === currExploredVal){
+								//progress the node to the next exploredness level (which should also prevent it from being added to the open set again.);
+								
+								//line x or y is below and/or right of point x or y;
+								//so line x is right of point x, line x-1 is left of point x;
+								//and line y is below point y, line y-1 is above point y;
+								
+								if(j === 0){
+									if(hlines[currUDRL[j][0]][currUDRL[j][1]-1][1] != undefined){
+										hlines[currUDRL[j][0]][currUDRL[j][1]-1][1] += 1;
+									};
+									if(hlines[currX][currY-1][1] != undefined){
+										hlines[currX][currY-1][1] += 1;
+									};
+								}else if(j === 1){
+									if(hlines[currUDRL[j][0]][currUDRL[j][1]][1] != undefined){
+										hlines[currUDRL[j][0]][currUDRL[j][1]][1] += 1;
+									};
+									if(hlines[currX][currY][1] != undefined){
+										hlines[currX][currY][1] += 1;
+									};
+								}else if(j === 2){
+									if(vlines[currUDRL[j][0]-1][currUDRL[j][1]][1] != undefined){
+										vlines[currUDRL[j][0]-1][currUDRL[j][1]][1] += 1;
+									};
+									if(typeof vlines[currX-1][currY][1] != undefined){
+										vlines[currX-1][currY][1] += 1;
+									};
+								}else if(j === 3){
+									if(vlines[currUDRL[j][0]][currUDRL[j][1]][1] != undefined){
+										vlines[currUDRL[j][0]][currUDRL[j][1]][1] += 1;
+									};
+									if(vlines[currX][currY][1] != undefined){
+										vlines[currX][currY][1] += 1;
+									};
+								};
+								
+
+								//if the node adjacent to the currentlyexamined node is open,; 
+								openSet.push({x:currUDRL[j][0],y:currUDRL[j][1]});
+							};
+						};
+						//remove the initial node from the open set;
+						openSet.splice(i,1); 
+						//if openSet was the last available, unexplored node, the floodable space has;
+						//been saturated, stop and check if we got it all.;
+					};
+				};
+				//TODO: start w/ list of all avail segments... then remove from as flooded to reduce search space.;
+				//TODO: for all still un-explored line seg,;
+				//   1  start there, ;
+				//   2  flood island, removing each from unexplored, ;
+				//	 3  if any adjacent unexplored h or v lines, grow into one;
+				//	 4  else move to any adjacent node (adding self to blacklist) and repeat 3-4;
+				
+				//increment explored val and do another pass (necessary?) ;
+				//(reset floodtotal);
+				currExploredVal++;
+			};
+			
+			var end = (new Date).getTime();
+			return 'time: '+(end-start).toString();
+		};
+		
+		
+		
+		var currNode = []; 
+		currNode[0] = 0; //x nodes;
+		currNode[1] = 0; //y nodes;
+				
+		function stepFloodFromBL(){
+				
+				adjacentNode = []; 
+				adjacentNode[0] = 0; //x nodes;
+				adjacentNode[1] = 0; //y nodes;
+				
+				console.log("currNode Start:"+currNode[0]+","+currNode[1]);
+				//check each of the potential orthagonal paths around the current node to see if they're even paths;
+				availablePaths = []; //x, y, h/v, times traveled ;
+				availableNodeNames = [];
+				
+				//----------------------------------------------------------------------------;
+				adjacentNode[0] = (currNode[0]-1);
+				adjacentNode[1] = currNode[1];	
+				if(currNode[0] > 0 && currNode[0] < hcellcount && hlines[adjacentNode[0]][adjacentNode[1]][0] == true){ // && typeof(hlines[adjacentNode[0]][adjacentNode[1]][0]) != 'undefined' ;
+					console.log("L currNode[0]:" + currNode[0] + ", hcellcount:"+hcellcount+", adjacentNode[0]:"+adjacentNode[0]+", adjacentNode[1]:"+adjacentNode[1]);
+					console.log("hlines["+adjacentNode[0]+"]["+adjacentNode[1]+"][0]:"+hlines[adjacentNode[0]][adjacentNode[1]][0]);
+										
+					availablePaths.push([adjacentNode[0],adjacentNode[1],"h", hlines[adjacentNode[0]][adjacentNode[1]][1]]); //Left;
+					availableNodeNames.push(["Left"]);
+				};
+				//----------------------------------------------------------------------------;
+				adjacentNode[0] = currNode[0];
+				adjacentNode[1] = currNode[1];
+				if(currNode[1] >= 0 && currNode[1] < vcellcount && vlines[adjacentNode[0]][adjacentNode[1]][0] == true){	//&& typeof(vlines[adjacentNode[0]][adjacentNode[1]][0]) != 'undefined';	
+					console.log("D currNode[0]:" + currNode[0] + ", vcellcount:"+vcellcount+", adjacentNode[0]:"+adjacentNode[0]+", adjacentNode[1]:"+adjacentNode[1]);
+					console.log("vlines["+adjacentNode[0]+"]["+adjacentNode[1]+"][0]:"+vlines[adjacentNode[0]][adjacentNode[1]][0]);
+					
+					availablePaths.push([adjacentNode[0],adjacentNode[1],"v",vlines[adjacentNode[0]][adjacentNode[1]][1]]); //Down;
+					availableNodeNames.push(["Down"]);				
+				};			
+				//----------------------------------------------------------------------------;
+				adjacentNode[0] = currNode[0];
+				adjacentNode[1] = currNode[1];	
+				if(currNode[0] >= 0 && currNode[0] < hcellcount && hlines[adjacentNode[0]][adjacentNode[1]][0] == true){		// && typeof(hlines[adjacentNode[0]][adjacentNode[1]][0]) != 'undefined';
+					console.log("R currNode[0]:" + currNode[0] + ", hcellcount:"+hcellcount+", adjacentNode[0]:"+adjacentNode[0]+", adjacentNode[1]:"+adjacentNode[1]);
+					console.log("hlines["+adjacentNode[0]+"]["+adjacentNode[1]+"][0]:"+hlines[adjacentNode[0]][adjacentNode[1]][0]);
+					
+					availablePaths.push([adjacentNode[0],adjacentNode[1],"h",hlines[adjacentNode[0]][adjacentNode[1]][1]]); //Right;
+					availableNodeNames.push(["Right"]);				
+				};
+				//----------------------------------------------------------------------------;
+				adjacentNode[0] = currNode[0];
+				adjacentNode[1] = (currNode[1]-1);
+				if(currNode[1] > 0 && currNode[1] < vcellcount && vlines[adjacentNode[0]][adjacentNode[1]][0] == true){        // && typeof(vlines[adjacentNode[0]][adjacentNode[1]][0]) != 'undefined';
+					console.log("U currNode[0]:" + currNode[0] + ", vcellcount:"+vcellcount+", adjacentNode[0]:"+adjacentNode[0]+", adjacentNode[1]:"+adjacentNode[1]);
+					console.log("vlines["+adjacentNode[0]+"]["+adjacentNode[1]+"][0]:"+vlines[adjacentNode[0]][adjacentNode[1]][0]);
+						
+					availablePaths.push([adjacentNode[0],adjacentNode[1],"v",vlines[adjacentNode[0]][adjacentNode[1]][1]]); //Up;
+					availableNodeNames.push(["Up"]);				
+				};
+				
+				//---------------------------------------------------------------------------;
+				
+				console.log(availableNodeNames);
+				
+				console.log("path list before sort: "+availablePaths.toString());
+				availablePaths = availablePaths.sort(
+				  function(a,b) {
+					return a[3] - b[3];
+				  });
+				console.log("path list after sort: "+availablePaths.toString());
+				
+				//---------------------------------------------------------------------------;
+				
+				//---------------------------------------------------------------------------;
+				//TODO: After the sort, remove items where the wear value is greater than item 0;
+				//		then randomly select among the available paths. or bias toward unfilled areas (create a fill map, divide, average, and floor);
+				
+				//---------------------------------------------------------------------------;
+				
+				//---------------------------------------------------------------------------;
+				
+				
+				//currNode = []; 
+				//currNode[0] = 0; //x nodes;
+				//currNode[1] = 0; //y nodes;
+				//currNode[2] = 0; //x pixels;
+				//currNode[3] = 0; //y pixels;
+				if(typeof(availablePaths[0]) != 'undefined'){
+					currNode[2] = currNode[0] * cellW; //x pixels;
+					currNode[3] = currNode[1] * cellH; //y pixels;
+					
+					
+					nextNode = []; 
+					nextNode[0] = 0; //x nodes;
+					nextNode[1] = 0; //y nodes;
+					nextNode[2] = 0; //x pixels;
+					nextNode[3] = 0; //y pixels;
+					
+					if(typeof(availablePaths[0]) != 'undefined'){
+						console.log("availablePaths[0]:"+availablePaths[0]);
+						console.log("currNode:"+currNode[0]+","+currNode[1]);
+						if(availablePaths[0][2] == "h"){
+							if(availablePaths[0][0] < currNode[0]){
+							
+								hlines[availablePaths[0][0]][availablePaths[0][1]][1]++;
+								
+								nextNode[0] = currNode[0]-1; //x nodes;
+								nextNode[1] = currNode[1]; //y nodes;
+								nextNode[2] = nextNode[0] * cellW; //x nodes;
+								nextNode[3] = nextNode[1] * cellH; //y nodes;
+								
+								currNode[0] -= 1;
+								console.log("Going Left");
+								
+								context.strokeStyle = '#'+Math.floor(Math.random()*16777215).toString(16);//'#FF0000';
+								context.beginPath();
+								context.lineWidth = 3;
+								context.moveTo( currNode[2] + padding, currNode[3] + padding);
+								context.lineTo( nextNode[2] + padding, nextNode[3] + padding);
+								context.stroke();
+								
+							}else if(availablePaths[0][0] == currNode[0]){
+								
+								hlines[availablePaths[0][0]][availablePaths[0][1]][1]++;
+								
+								nextNode[0] = currNode[0] + 1; //x nodes;
+								nextNode[1] = currNode[1]; //y nodes;
+								nextNode[2] = nextNode[0] * cellW; //x nodes;
+								nextNode[3] = nextNode[1] * cellH; //y nodes;
+								
+								currNode[0] = ((currNode[0]+1)-(Math.floor(currNode[0]/(vcellcount-2))*(currNode[0]-(vcellcount-2))));
+								if(currNode[0] == 40){
+									//alert("what the hell guys, currNode[0] is 40!");
+								};
+								console.log("Going Right");
+								
+								context.strokeStyle = '#'+Math.floor(Math.random()*16777215).toString(16);//'#FF0000';
+								context.beginPath();
+								context.lineWidth = 3;
+								context.moveTo( currNode[2] + padding, currNode[3] + padding);
+								context.lineTo( nextNode[2] + padding, nextNode[3] + padding);
+								context.stroke();
+								
+							}else{
+								console.log("Error 65432: "+availablePaths[0][0]+":"+currNode[0]);
+							};
+						}else if(availablePaths[0][2] == "v"){
+							if(availablePaths[0][1] < currNode[1]){
+								
+								vlines[availablePaths[0][0]][availablePaths[0][1]][1]++;
+								
+								nextNode[0] = currNode[0]; //x nodes;
+								nextNode[1] = currNode[1] - 1; //y nodes;
+								nextNode[2] = nextNode[0] * cellW; //x nodes;
+								nextNode[3] = nextNode[1] * cellH; //y nodes;
+								
+								currNode[1] -= 1;
+								console.log("Going Up");
+								
+								context.strokeStyle = '#'+Math.floor(Math.random()*16777215).toString(16);//'#FF0000';
+								context.beginPath();
+								context.lineWidth = 3;
+								context.moveTo( currNode[2] + padding, currNode[3] + padding);
+								context.lineTo( nextNode[2] + padding, nextNode[3] + padding);
+								context.stroke();
+								
+							}else if(availablePaths[0][1] == currNode[1]){
+								
+								vlines[availablePaths[0][0]][availablePaths[0][1]][1]++;
+								
+								nextNode[0] = currNode[0]; //x nodes;
+								nextNode[1] = currNode[1] + 1; //y nodes;
+								nextNode[2] = nextNode[0] * cellW; //x nodes;
+								nextNode[3] = nextNode[1] * cellH; //y nodes;
+								
+								currNode[1] = ((currNode[1]+1)-(Math.floor(currNode[1]/(hcellcount-2))*(currNode[1]-(hcellcount-2))));
+								if(currNode[1] == 40){
+									//alert("what the hell guys, currNode[1] is 40!");
+								};
+								console.log("Going Down");
+								
+								context.strokeStyle = '#'+Math.floor(Math.random()*16777215).toString(16);//'#FF0000';
+								context.beginPath();
+								context.lineWidth = 3;
+								context.moveTo( currNode[2] + padding, currNode[3] + padding);
+								context.lineTo( nextNode[2] + padding, nextNode[3] + padding);
+								context.stroke();
+								
+							}else{
+								
+								console.log("Error 8945641: "+availablePaths[0][1]+":"+currNode[1]);
+							};					
+						}else{
+							console.log("sorry, no direction");
+						};
+					};
+				
+				}else{
+					console.log("no available paths! eegads!");
+				};
+				
+				console.log("End Node:"+currNode[0]+","+currNode[1]+"*********************************************************");
+		};
+		function randrange(min, max) {
+			//select rand int in range inclusive;
+			return Math.round(Math.random() * (max - min) + min);
+		};
+		//setInterval("stepFloodFromBL()",100);
+	</script>
+</html>
+
