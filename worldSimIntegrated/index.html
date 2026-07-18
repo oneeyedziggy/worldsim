@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WorldSim Integrated</title>
+  <script src="../Chart.min.js"></script>
+  <style>
+    :root {
+      --bg: #f3f1ea;
+      --panel: rgba(255, 255, 255, 0.92);
+      --ink: #1d1d1d;
+      --muted: #5b5b5b;
+      --line: rgba(0, 0, 0, 0.14);
+      --food: #0f910f;
+      --energy: #0d0d91;
+      --money: #910f0f;
+      --accent: #8d5a22;
+      --shadow: 0 20px 60px rgba(0, 0, 0, 0.14);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(141, 90, 34, 0.10), transparent 28%),
+        radial-gradient(circle at top right, rgba(15, 145, 15, 0.10), transparent 24%),
+        linear-gradient(180deg, #f6f3ea 0%, #ece7da 100%);
+      font: 15px/1.5 Georgia, 'Times New Roman', serif;
+    }
+
+    .page {
+      width: min(1400px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 24px 0 40px;
+    }
+
+    .hero {
+      margin-bottom: 18px;
+      padding: 18px 22px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .hero h1 {
+      margin: 0 0 6px;
+      font-size: clamp(28px, 4vw, 44px);
+      line-height: 1.05;
+      letter-spacing: 0.02em;
+    }
+
+    .hero p {
+      margin: 0;
+      color: var(--muted);
+      max-width: 900px;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      align-items: end;
+    }
+
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .control-group label,
+    .metric-group-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    .button-row,
+    .metric-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    button,
+    input[type='number'] {
+      border: 1px solid rgba(0, 0, 0, 0.18);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--ink);
+      padding: 10px 14px;
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+      background: linear-gradient(180deg, #fff, #efe7d8);
+    }
+
+    button:hover {
+      border-color: rgba(0, 0, 0, 0.3);
+    }
+
+    input[type='range'] {
+      width: 100%;
+    }
+
+    .scene-panel {
+      position: relative;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      overflow: hidden;
+      background: #111;
+      box-shadow: var(--shadow);
+      margin-bottom: 18px;
+    }
+
+    #threeContainer {
+      width: 100%;
+      height: min(62vh, 760px);
+    }
+
+    #threeContainer canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .scene-legend {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      z-index: 20;
+      min-width: 180px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(0, 0, 0, 0.72);
+      color: #fff;
+      font: 12px/1.4 Arial, sans-serif;
+      backdrop-filter: blur(6px);
+    }
+
+    .scene-legend h2 {
+      margin: 0 0 8px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .legend-swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25);
+    }
+
+    .scene-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 15;
+    }
+
+    .tooltip {
+      position: absolute;
+      display: none;
+      min-width: 220px;
+      max-width: 320px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.74);
+      color: #111;
+      font: 12px/1.4 Arial, sans-serif;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.22);
+      backdrop-filter: blur(8px);
+      white-space: pre-line;
+      transform: translate(12px, -50%);
+    }
+
+    .hud {
+      position: absolute;
+      left: 16px;
+      bottom: 16px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(0, 0, 0, 0.72);
+      color: #fff;
+      font: 12px/1.4 Arial, sans-serif;
+      max-width: min(380px, calc(100% - 32px));
+    }
+
+    .charts-panel {
+      padding: 14px 16px 18px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      max-width: 1240px;
+      margin: 0 auto;
+    }
+
+    .charts-panel h2 {
+      margin: 0 0 6px;
+      font-size: 22px;
+    }
+
+    .charts-panel p {
+      margin: 0 0 14px;
+      color: var(--muted);
+    }
+
+    .chart-legends {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin: 0 0 12px;
+    }
+
+    .chart-legend {
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.86);
+    }
+
+    .chart-legend-title {
+      margin: 0 0 6px;
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .chart-legend-items {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      font-size: 13px;
+    }
+
+    .chart-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .chart-legend-swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 2px;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.22);
+      flex: 0 0 12px;
+    }
+
+    .chart-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .chart-card {
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.86);
+    }
+
+    .chart-card h3 {
+      margin: 0 0 8px;
+      font-size: 15px;
+    }
+
+    .chart-card canvas {
+      aspect-ratio: 16 / 9;
+      width: auto;
+      max-width: 100%;
+      height: min(22vh, 220px);
+      max-height: 40vh;
+      display: block;
+      margin: 0 auto;
+    }
+
+    .metric-panel {
+      margin-bottom: 18px;
+      padding: 12px 16px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    @media (max-width: 960px) {
+      .chart-legends {
+        grid-template-columns: 1fr;
+      }
+
+      .chart-grid {
+        grid-template-columns: 1fr;
+      }
+
+    }
+  </style>
+</head>
+
+<body>
+  <div class="page">
+    <section class="hero">
+      <h1>WorldSim Integrated</h1>
+      <p>
+        A unified market-and-movement sandbox: agents evaluate scarcity, choose trade partners,
+        navigate the shared road network to meet them, and update regional market charts in real time.
+      </p>
+    </section>
+
+    <section class="controls">
+      <div class="control-group">
+        <label for="agentCountInput">Agent Count</label>
+        <input id="agentCountInput" type="number" min="20" max="300" step="10" value="120" />
+      </div>
+
+      <div class="control-group">
+        <label for="resetButton"></label>
+        <div class="button-row">
+          <button id="resetButton" type="button">Apply</button>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <label for="speedControl">Simulation Speed</label>
+        <div class="button-row">
+          <button id="pauseSpeedButton" type="button">Pause</button>
+          <input id="speedControl" type="range" min="0" max="2" step="0.05" value="0.05" style="flex:1 1 180px;" />
+        </div>
+        <div id="speedReadout">0.05x speed | 1.6 move units/sec | 1.0 ticks/sec</div>
+      </div>
+    </section>
+
+    <section class="scene-panel">
+      <div id="threeContainer"></div>
+      <div class="scene-legend">
+        <h2>Legend</h2>
+        <div class="legend-item"><span class="legend-swatch" style="background:#0f910f"></span><span>Food
+            dominant</span></div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#0d0d91"></span><span>Energy
+            dominant</span></div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#910f0f"></span><span>Money
+            dominant</span></div>
+        <div style="margin-top:8px;color:rgba(255,255,255,0.78)">
+          Hover an agent to see its remaining route and current trade intent.
+        </div>
+      </div>
+      <div class="scene-overlay">
+        <div id="agentTooltip" class="tooltip"></div>
+        <div id="sceneHud" class="hud"></div>
+      </div>
+    </section>
+
+    <section class="metric-panel">
+      <div class="metric-group-title">Chart Metric</div>
+      <div class="metric-row" id="metricForm">
+        <label><input type="radio" name="metric" value="price" checked /> Price</label>
+        <label><input type="radio" name="metric" value="quantity" /> Quantity</label>
+        <label><input type="radio" name="metric" value="supply" /> Supply</label>
+        <label><input type="radio" name="metric" value="demand" /> Demand</label>
+      </div>
+    </section>
+
+    <section class="charts-panel">
+      <h2>Regional Market Charts</h2>
+      <p>
+        The top four charts show each region's three tracked resources. The bottom charts compare food and energy
+        across regions for the currently selected metric.
+      </p>
+      <div class="chart-legend">
+        <h3 class="chart-legend-title">Resource Line Colors</h3>
+        <div class="chart-legend-items">
+          <span class="chart-legend-item"><span class="chart-legend-swatch"
+              style="background:rgba(15,145,15,1)"></span>Food</span>
+          <span class="chart-legend-item"><span class="chart-legend-swatch"
+              style="background:rgba(13,13,145,1)"></span>Energy</span>
+          <span class="chart-legend-item"><span class="chart-legend-swatch"
+              style="background:rgba(145,15,15,1)"></span>Money</span>
+        </div>
+      </div>
+      <div class="chart-grid">
+        <article class="chart-card">
+          <h3>Region 0 Market</h3>
+          <canvas id="region0Chart" width="640" height="360"></canvas>
+        </article>
+        <article class="chart-card">
+          <h3>Region 1 Market</h3>
+          <canvas id="region1Chart" width="640" height="360"></canvas>
+        </article>
+        <article class="chart-card">
+          <h3>Region 2 Market</h3>
+          <canvas id="region2Chart" width="640" height="360"></canvas>
+        </article>
+        <article class="chart-card">
+          <h3>Region 3 Market</h3>
+          <canvas id="region3Chart" width="640" height="360"></canvas>
+        </article>
+      </div>
+      <div class="chart-legend" style="margin:10px 0 12px;">
+        <h3 class="chart-legend-title">Region Line Colors</h3>
+        <div class="chart-legend-items">
+          <span class="chart-legend-item"><span class="chart-legend-swatch"
+              style="background:rgba(15,145,15,1)"></span>Region 0</span>
+          <span class="chart-legend-item"><span class="chart-legend-swatch"
+              style="background:rgba(13,13,145,1)"></span>Region 1</span>
+          <span class="chart-legend-item"><span class="chart-legend-swatch"
+              style="background:rgba(145,15,15,1)"></span>Region 2</span>
+          <span class="chart-legend-item"><span class="chart-legend-swatch"
+              style="background:rgba(158,118,227,1)"></span>Region 3</span>
+        </div>
+      </div>
+      <div class="chart-grid">
+        <article class="chart-card">
+          <h3>Food Across Regions</h3>
+          <canvas id="foodChart" width="640" height="360"></canvas>
+        </article>
+        <article class="chart-card">
+          <h3>Energy Across Regions</h3>
+          <canvas id="energyChart" width="640" height="360"></canvas>
+        </article>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="./worldSimIntegrated.js"></script>
+</body>
+
+</html>
